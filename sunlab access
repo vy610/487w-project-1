@@ -1,0 +1,223 @@
+import firebase_admin
+from firebase_admin import credentials
+from firebase_admin import firestore
+from google.cloud.firestore import SERVER_TIMESTAMP
+import datetime as dt
+from tkinter import ttk  
+
+import tkinter as tk
+
+
+cred = credentials.Certificate(r"C:\Users\vnd61\Downloads\w-project-1-3d269-firebase-adminsdk-cgvx6-dff0b9b77c.json")
+firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+
+user_collection_ref = db.collection('users')
+access_collection_ref = db.collection('access')
+
+def check_user_id():
+    user_input = id_input_box.get()  
+    doc_ref = user_collection_ref.document(user_input)
+
+    try:
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            print("Document data:", data)
+            person_type = data.get("type")
+            print("Person type:", person_type)
+            access = data.get("access")
+            if (person_type == "student" and access):
+                show_swiping_frame()
+            if (person_type == "janitor" and access):
+                show_swiping_frame()    
+            elif(person_type == "admin"):
+                show_admin_frame()
+            else:
+                id_instruction_label.config(text="Access denied")
+        else:
+            id_instruction_label.config(text="Invalid ID")
+    except Exception as e:
+            id_instruction_label.config(text=f"Error: {str(e)}")
+
+def check_swiping_id():
+    in_or_out = radiobutton_checker.get()
+
+
+def show_swiping_frame():  
+    verification_frame.pack_forget()
+    swiping_frame.pack()
+
+
+def add_data():
+    #input from when user inputed their id and from the radio button 
+    user_input = id_input_box.get()
+    in_or_out = radiobutton_checker.get()
+
+    doc_ref = user_collection_ref.document(user_input)
+    try:
+        doc = doc_ref.get()
+        if doc.exists:
+            data = doc.to_dict()
+            name = data.get("name")
+            id = data.get("id")
+            
+            access_ref = db.collection('access').add({
+                "name": name,
+                "id": id,
+                "in_out": in_or_out,
+                "timestamp": SERVER_TIMESTAMP
+            })
+
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+def show_admin_frame():
+    verification_frame.pack_forget()
+    admin_frame = tk.Frame(root)
+    admin_frame.pack(anchor='w', padx=10, pady=10)
+
+    users_ref = db.collection('users')
+    access_ref = db.collection('access')
+    name_states = {}
+
+    users_frame = tk.LabelFrame(admin_frame, text="Users")
+    users_frame.grid(row=0, column=0, padx=10, pady=10)
+    users_canvas = tk.Canvas(users_frame, highlightthickness=1, highlightbackground="black")
+    users_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    
+    users_scrollbar = tk.Scrollbar(users_frame, command=users_canvas.yview)
+    users_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    users_canvas.configure(yscrollcommand=users_scrollbar.set)
+
+    users_inner_frame = tk.Frame(users_canvas)
+    users_canvas.create_window((0, 0), window=users_inner_frame, anchor="nw")
+
+    access_frame = tk.LabelFrame(admin_frame, text="Access")
+    access_frame.grid(row=0, column=1, padx=10, pady=10)
+    access_canvas = tk.Canvas(access_frame, highlightthickness=1, highlightbackground="black")
+    access_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    access_scrollbar = tk.Scrollbar(access_frame, command=access_canvas.yview)
+    access_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    access_canvas.configure(yscrollcommand=access_scrollbar.set)
+    access_inner_frame = tk.Frame(access_canvas)
+    access_canvas.create_window((0, 0), window=access_inner_frame, anchor="nw")
+
+    def toggle_state(name, state_var, doc_id): 
+        current_state = state_var.get()
+        new_state = "Enable" if current_state == "Disable" else "Disable"
+        state_var.set(new_state)
+        if new_state == "Enable":
+            users_ref.document(doc_id).update({'access': False})
+        else:
+            users_ref.document(doc_id).update({'access': True})
+
+    row = 0
+    
+    for doc in users_ref.stream():
+        data = doc.to_dict()
+        name = data.get("name")
+        person_type = data.get("type")
+        doc_id = doc.id
+        access = data.get('access', True)  
+        if (person_type == "student" or person_type =="janitor"):
+            label = tk.Label(users_inner_frame, text=name)
+            label.grid(row=row, column=0, padx=10, pady=5, sticky="w")
+            state_var = tk.StringVar()
+            state_var.set("Disable" if access else "Enable")
+            button = tk.Button(users_inner_frame, textvariable=state_var, command=lambda n=name, sv=state_var, did=doc_id: toggle_state(n, sv, did))
+            button.grid(row=row, column=1, padx=10, pady=5, sticky="w")
+            name_states[name] = state_var
+            row += 1
+
+    filter_frame = tk.Frame(admin_frame)
+    filter_frame.grid(row=1, column=1, padx=10, pady=10, sticky="w")
+
+    date_label = tk.Label(filter_frame, text="Date:")
+    date_label.pack(side=tk.LEFT, padx=5)
+
+    date_var = tk.StringVar()
+    date_entry = tk.Entry(filter_frame, textvariable=date_var)
+    date_entry.pack(side=tk.LEFT, padx=5)
+    date_entry.insert(0, dt.datetime.now().strftime('%Y-%m-%d'))
+
+    name_label = tk.Label(filter_frame, text="Name:")
+    name_label.pack(side=tk.LEFT, padx=5)
+    name_var = tk.StringVar()
+    
+    name_entry = tk.Entry(filter_frame, textvariable=name_var)
+    name_entry.pack(side=tk.LEFT, padx=5)
+
+    def filter_by_date_and_name():
+        chosen_date = date_var.get()
+        chosen_name = name_var.get().strip()
+
+        query = access_ref
+        if chosen_date:
+            start_time = dt.datetime.strptime(chosen_date, '%Y-%m-%d')
+            end_time = start_time + dt.timedelta(days=1)
+            query = query.where('timestamp', '>=', start_time).where('timestamp', '<', end_time)
+        if chosen_name:
+            query = query.where('name', '==', chosen_name)
+
+        for widget in access_inner_frame.winfo_children():
+            widget.destroy()
+        
+        row = 0
+        for doc in query.stream():
+            data = doc.to_dict()
+            timestamp = data.get('timestamp').strftime('%Y-%m-%d %H:%M:%S')
+            name = data.get('name')
+            in_out = data.get('in_out')
+            label = tk.Label(access_inner_frame, text=f"{name} - {timestamp} - {in_out}")
+            label.grid(row=row, column=0, padx=10, pady=5, sticky="w")
+
+            row += 1
+
+    filter_button = tk.Button(filter_frame, text="Filter", command=filter_by_date_and_name)
+    filter_button.pack(side=tk.LEFT, padx=5)
+    filter_by_date_and_name()
+
+root = tk.Tk()
+verification_frame = tk.Frame(root)
+verification_frame.pack()
+
+################################## id verification page ##################################
+verification_frame = tk.Frame(root)
+verification_frame.pack()
+
+id_input_box = tk.Entry(verification_frame, width=40)
+id_input_box.grid(row=3, column=1)
+
+submit_button = tk.Button(verification_frame, text="Submit", command=check_user_id)
+submit_button.grid(row=3, column=6)
+
+id_instruction_label = tk.Label(verification_frame, text="Please enter your ID and select an option")
+id_instruction_label.grid(row=0, column=0, columnspan=7)
+
+##################################### swiping page ##################################
+swiping_frame = tk.Frame(root)
+
+swiping_instruction_label = tk.Label(swiping_frame, text="Please swipe your card")
+swiping_instruction_label.grid(row=0, column=0, columnspan=7)
+
+swipe_id_input_box = tk.Entry(swiping_frame, width=40)
+swipe_id_input_box.grid(row=3, column=1)
+
+#initialize in and out buttons
+radiobutton_checker = tk.StringVar() 
+radiobutton_checker.set(None)
+radiobutton_in = tk.Radiobutton(swiping_frame, text="in", variable=radiobutton_checker, value="in")
+radiobutton_in.grid(row=3, column=2, columnspan=2)
+radiobutton_out = tk.Radiobutton(swiping_frame, text="out", variable=radiobutton_checker, value="out")
+radiobutton_out.grid(row=3, column=4, columnspan=2)
+
+swiping_submit_button = tk.Button(swiping_frame, text="Submit", command = add_data)
+swiping_submit_button.grid(row=3, column=6)
+
+##################################### admin page ##################################
+admin_frame = tk.Frame(root)
+
+root.mainloop()
